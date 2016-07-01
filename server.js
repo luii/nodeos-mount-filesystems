@@ -12,6 +12,7 @@ const prompt     = require('prompt')
 const rimraf     = require('rimraf')
 const utils      = require('nodeos-mount-utils')
 const each       = async.each
+const parallel   = async.parallel
 const eachSeries = async.eachSeries
 
 // Global variables
@@ -87,14 +88,13 @@ function onerror(error)
  */
 function linuxCmdline(cmdline)
 {
-  var result = {}
+  let result = {}
 
-  cmdline.trim().split(' ').forEach(function(arg)
-  {
+  cmdline.trim().split(' ').forEach(arg => {
     arg = arg.split('=')
 
-    var key = arg.shift()
-    var val = true
+    let key = arg.shift()
+    let val = true
 
     if(arg.length)
     {
@@ -131,7 +131,7 @@ function linuxCmdline(cmdline)
  */
 function mkdirMountInfo(info, callback)
 {
-  var dev = info.dev || info.type
+  let dev = info.dev || info.type
 
   utils.mkdirMount(dev, info.path, info.type, info.flags, info.extras, callback)
 }
@@ -171,18 +171,16 @@ function mkdirMoveInfo(info, callback)
  */
 function mountUserFilesystems(arr, upperdir, callback)
 {
-  each(arr, mkdirMountInfo, function(error)
-  {
+  each(arr, mkdirMountInfo, error => {
     if(error) return callback(error)
 
     if(single) return callback()
 
     // Execute init
-    utils.execInit(upperdir, [], function(error)
-    {
+    utils.execInit(upperdir, [], error => {
       if(error) console.warn(error)
 
-      callback()
+      return callback()
     })
   })
 }
@@ -198,30 +196,29 @@ function mountUserFilesystems(arr, upperdir, callback)
  */
 function mountDevProcTmp_ExecInit(upperdir, isRoot, callback)
 {
-  var arr =
+  let arr =
   [
     {
       dev: '/proc',
-      path: upperdir+'/proc',
+      path: `${upperdir}/proc`,
       flags: MS_BIND
     },
     {
-      path: upperdir+'/tmp',
+      path: `${upperdir}/tmp`,
       type: 'tmpfs',
       flags: flags
     }
   ]
 
-  var path = upperdir+'/dev'
+  let path = `${upperdir}/dev`,
 
   // Root user
   if(isRoot && fs.existsSync(EXCLFS_BIN))
-    return mkdirp(path, '0000', function(error)
-    {
+    return mkdirp(path, '0000', error => {
       if(error && error.code !== 'EEXIST') return callback(error)
 
-      var argv = ['/dev', path, '-o', 'ownerPerm=true']
-      var options =
+      let argv = [ '/dev', path, '-o', 'ownerPerm=true' ]
+      let options =
       {
         detached: true,
         stdio: 'inherit'
@@ -231,26 +228,25 @@ function mountDevProcTmp_ExecInit(upperdir, isRoot, callback)
       .on('error', console.error.bind(console))
       .unref()
 
-      waitUntilDevMounted(path, 5, function(error)
-      {
+      waitUntilDevMounted(path, 5, error => {
         if(error) return callback(error)
 
         // Remove ExclFS from initramfs to free memory
         rimraf(EXCLFS_BIN)
         rimraf('/lib/node_modules/exclfs')
 
-        mountUserFilesystems(arr, upperdir, callback)
+        return mountUserFilesystems(arr, upperdir, callback)
       })
     })
 
   // Regular user
   arr.unshift({
-    dev: ROOT_HOME+'/dev',
+    dev: `${ROOT_HOME}/dev`,
     path: path,
     flags: MS_BIND
   })
 
-  mountUserFilesystems(arr, upperdir, callback)
+  return mountUserFilesystems(arr, upperdir, callback)
 }
 
 /**
@@ -264,26 +260,24 @@ function mountDevProcTmp_ExecInit(upperdir, isRoot, callback)
  */
 function overlay_user(usersFolder, user, callback)
 {
-  var upperdir = usersFolder+'/'+user
-  var workdir  = usersFolder+'/.workdirs/'+user
+  let upperdir = `${usersFolder}/${user}`
+  let workdir  = `${usersFolder}/.workdirs/${user}`
 
-  mkdirp(workdir, '0100', function(error)
-  {
+  mkdirp(workdir, '0100', error => {
     if(error && error.code !== 'EEXIST') return callback(error)
 
     // Craft overlayed filesystem
-    var type   = 'overlay'
-    var extras =
+    let type   = 'overlay'
+    let extras =
     {
       lowerdir: '/',
       upperdir: upperdir,
       workdir : workdir
-    };
+    }
 
     if(user === 'root') upperdir = '/root'
 
-    utils.mkdirMount(type, upperdir, type, MS_NOSUID, extras, function(error)
-    {
+    utils.mkdirMount(type, upperdir, type, MS_NOSUID, extras, error => {
       if(error) return callback(error)
 
       if(user !== 'root')
@@ -294,25 +288,22 @@ function overlay_user(usersFolder, user, callback)
       [
         {
           source: HOME,
-          target: upperdir+'/home'
+          target: `${upperdir}/home`
         },
         {
           source: upperdir,
           target: HOME
         }
       ],
-      mkdirMoveInfo,
-      function(error)
-      {
-        if(error) return callback(error)
+      mkdirMoveInfo, err => {
+        if(err) return callback(err)
 
-        mountDevProcTmp_ExecInit(HOME, true, function(error)
-        {
-          if(error) return callback(error)
+        mountDevProcTmp_ExecInit(HOME, true, e => {
+          if(e) return callback(e)
 
           ROOT_HOME = HOME
 
-          callback(null, HOME+'/home')
+          return callback(null, `${HOME}/home`)
         })
       })
     })
@@ -350,13 +341,12 @@ function overlay_users(usersFolder, callback)
     // Make '/usr' a opaque folder (OverlayFS feature)
     rimraf('/usr')
 
-    callback(error)
+    return callback(error)
   }
 
   // Mount users directories and exec their init files
-  fs.readdir(usersFolder, function(error, users)
-  {
-    if(error) return done(error)
+  fs.readdir(usersFolder, (err, users) => {
+    if(err) return done(err)
 
     each(users.filter(filterUser),
          overlay_user.bind(undefined, usersFolder),
@@ -375,11 +365,10 @@ function overlay_users(usersFolder, callback)
  */
 function waitUntilExists(path, tries, callback)
 {
-  fs.exists(path, function(exists)
-  {
+  fs.exists(path, exists => {
     if(exists) return callback()
 
-    if(tries-- <= 0) return callback(new Error(path+' not exists'))
+    if(tries-- <= 0) return callback(new Error(`${path} not exists`))
 
     setTimeout(waitUntilExists, 1000, path, tries, callback)
   })
@@ -396,13 +385,12 @@ function waitUntilExists(path, tries, callback)
  */
 function waitUntilDevMounted(path, tries, callback)
 {
-  fs.readdir(path, function(error, files)
-  {
+  fs.readdir(path, (error, files) => {
     if(error) return callback(error)
 
     if(files.length > 1) return callback()
 
-    if(tries-- <= 0) return callback(new Error(path+' not mounted'))
+    if(tries-- <= 0) return callback(new Error(`${path} not mounted`))
 
     setTimeout(waitUntilDevMounted, 1000, path, tries, callback)
   })
@@ -449,7 +437,7 @@ function adminOrUsers(home)
   if(single) return utils.startRepl('Administrator mode')
 
   // Users filesystem don't have a root user, just overlay users folders
-  overlay_users(home, onerror)
+  return overlay_users(home, onerror)
 }
 
 /**
@@ -473,8 +461,7 @@ function prepareSessions()
   env['NODE_PATH'] = '/lib/node_modules'
 
   // Check if users filesystem has an administrator account
-  fs.readdir(HOME+'/root', function(error)
-  {
+  fs.readdir(`${HOME}/root`, error => {
     if(error)
     {
       if(error.code != 'ENOENT') return onerror(error)
@@ -482,11 +469,10 @@ function prepareSessions()
       return adminOrUsers(HOME)
     }
 
-    overlay_user(HOME, 'root', function(error, home)
-    {
+    overlay_user(HOME, 'root', (error, home) => {
       if(error) return onerror(error)
 
-      adminOrUsers(home)
+      return adminOrUsers(home)
     })
   })
 }
@@ -510,25 +496,21 @@ function mountUsersFS(cmdline)
   if(usersDev === undefined) usersDev = cmdline.root
 
   // Running on a container (Docker, vagga), don't mount the users filesystem
-  if(usersDev === 'container')
-    prepareSessions()
+  if(usersDev === 'container') return prepareSessions()
 
   // Running on real hardware or virtual machine, mount the users filesystem
   else if(usersDev)
-    waitUntilExists(usersDev, 5, function(error)
-    {
+    waitUntilExists(usersDev, 5, error => {
       if(error) return askLocation(error)
 
       // Mount users filesystem
       var type   = process.env.rootfstype || cmdline.rootfstype || 'auto'
-      var extras = {errors: 'remount-ro'}
+      var extras = { errors: 'remount-ro' }
 
-      utils.mkdirMount(resolve(usersDev), HOME, type, flags, extras,
-        function(error)
-      {
-        if(error) return onerror(error)
+      utils.mkdirMount(resolve(usersDev), HOME, type, flags, extras, err => {
+        if(err) return onerror(err)
 
-        prepareSessions()
+        return prepareSessions()
       })
     })
 
