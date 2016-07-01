@@ -2,33 +2,46 @@
 
 "use strict"
 
-var fs      = require('fs')
-var resolve = require('path').resolve
-var spawn   = require('child_process').spawn
+// Dependencies
+const fs         = require('fs')
+const path       = require('path')
+const proc       = require('child_process')
+const async      = require('async')
+const mkdirp     = require('mkdirp')
+const prompt     = require('prompt')
+const rimraf     = require('rimraf')
+const utils      = require('nodeos-mount-utils')
+const each       = async.each
+const eachSeries = async.eachSeries
 
-var async  = require('async')
-var mkdirp = require('mkdirp')
-var prompt = require('prompt')
-var rimraf = require('rimraf').sync
-
-var each       = async.each
-var eachSeries = async.eachSeries
-
-var utils = require('nodeos-mount-utils')
-var flgs  = utils.flags
-
-const MS_BIND   = flgs.MS_BIND
-const MS_NODEV  = flgs.MS_NODEV
-const MS_NOSUID = flgs.MS_NOSUID
-
-const flags = MS_NODEV | MS_NOSUID
+// Global variables
+const MS_BIND    = utils.flags.MS_BIND
+const MS_NODEV   = utils.flags.MS_NODEV
+const MS_NOSUID  = utils.flags.MS_NOSUID
+const flags      = MS_NODEV | MS_NOSUID
 const EXCLFS_BIN = '/bin/exclfs'
-const HOME = '/tmp'
+const HOME       = '/tmp'
 
+/**
+ * cmdline is a file located inside `/proc/cmdline`
+ * it contains information about the `initrd`, `root` partition and other stuff
+ * @type {String}
+ */
+let cmdline
 
-var cmdline
-var ROOT_HOME = ''
-var single
+/**
+ * This path points either to `/tmp`
+ * @todo This can be removed because its only used once
+ *       we could just use $HOME because both point to `/tmp`
+ * @type {String}
+ */
+let ROOT_HOME = ''
+
+/**
+ * This variable holds the `single` key if its available in `/proc/cmdline`
+ * @type {String}
+ */
+let single
 
 /**
  * This callback is part of the `mountDevProcTmp_ExecInit` function
