@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+"use strict"
+
 var fs      = require('fs')
 var resolve = require('path').resolve
 var spawn   = require('child_process').spawn
